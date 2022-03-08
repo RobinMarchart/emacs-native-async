@@ -1,0 +1,14 @@
+[package]
+name = "native-setup"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+emacs = "0.18"
+emacs-native-async = {path = ".."}
+libc = "0.2.119"
+
+[lib]
+crate-type = ["cdylib"]

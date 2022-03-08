@@ -1,0 +1,11 @@
+[package]
+edition = "2021"
+name = "emacs-native-async"
+version = "0.1.0"
+[dependencies]
+libc = "0.2.119"
+anyhow = "1.0"
+emacs = "0.18"
+parking_lot="0.4.6"
+[workspace]
+members=["native-setup","setup-bin"]
