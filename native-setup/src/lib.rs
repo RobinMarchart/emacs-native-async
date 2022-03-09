@@ -52,7 +52,7 @@ fn main() {
         #[defun]
         fn retrieve(
             env: &Env,
-            id: u64,
+            id: i64,
             notifications: &Arc<NotificationHandler>,
         ) -> emacs::Result<ToLispConvert> {
             notifications.retrieve(id)

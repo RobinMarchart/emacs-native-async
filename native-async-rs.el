@@ -72,5 +72,8 @@ This includes both the Emacs and rust side."
          (unless 'native-async-rs--default-handler(setq native-async-rs--default-handler (native-async-rs-init)))
          native-async-rs--default-handler))
 
+(defun native-async-rs-wait-for (notifications index) "Wait for the result of the operation identified by index."
+       (promise-new (lambda (resolve reject) (puthash index [resolve reject] (aref notifications 1)))))
+
 (provide 'native-async-rs)
 ;;; native-async-rs.el ends here
