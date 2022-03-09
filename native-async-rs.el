@@ -6,43 +6,44 @@
 ;;;
 ;;; Code:
 
+(unless module-file-suffix (error "Missing native module support"))
 (require 'promise)
 
-(unless module-file-suffix (error "Missing native module support"))
 
 (defvar native-async-rs--rootdir (file-name-directory (or load-file-name buffer-file-name)) "Local Directory of native-async-rs repo.")
-(defvar native-async-rs--module-dir (expand-file-name "native-setup" native-async-rs--rootdir) "Source directory of the dynamic module crate.")
-(defvar native-async-rs--exec-dir (expand-file-name "setup-bin" native-async-rs--rootdir) "Source directory of the helper executable crate.")
-(defvar native-async-rs--build-type-release "t" "Build type used for builds and binary path.")
 (defvar native-async-rs--executable-file-name "setup-bin" "Name of the helper executable.")
-(defvar native-async-rs--module-file-name "libnative_setup.so" "Name of the dynamic module file.")
-(defvar native-async-rs--cargo-executable "cargo" "Name of the used cargo executable.")
+(defvar native-async-rs--module-file-name "libnative_setup" "Name of the dynamic module file.")
 
-(defun native-async-rs--wait-sync (promise) "Run PROMISE in other thread and suspend until completion." ())
+(load native-async-rs--module-file-name)
 
-(defun native-async-rs-build (dir) "Build the default target of the crate inside this DIR."
-       (make-process :buffer "native-async-rs-buildlog" :command (append('native-async-rs--cargo-executable "build")
-                                                                        (if ('native-async-rs--build-type-release) ("--release") ()))
-                     :query 'nil
-                     :connection-type "pipe"
-                     :sentinel (lambda (process _status) ())))
+(defun native-async-rs--wait-sync (promise) "Run PROMISE in other thread and suspend until completion."
+       (let ((mutex (make-mutex)) (res (make-vector 2 'nil)))
+         (mutex-lock mutex)
+         (promise-chain promise
+           (then (lambda (value) (aset res 0 't) (aset res 1 value)))
+           (catch (lambda (reason) (aset res 1 reason)))
+           (finally (lambda () (mutex-unlock mutex))))
+         (mutex-lock mutex)
+         (if (aref res 0) (aref res 1) (signal (car (aref res 1)) (cdr (aref res 1))))))
 
+(intern "native-async-rs--notification-handler")
 
 (defun native-async-rs--init () "Initialize the event handler.
-This includes both the Emacs and rust side." (let ((target-dir
-                                                    (expand-file-name (if ('native-async-rs--build-type-release) ('"release") ('"debug"))
-                                                                      (expand-file-name "target" native-async-rs--rootdir))))
-                                               (let (
-                                                     (exec-file (expand-file-name native-async-rs--executable-file-name target-dir))
-                                                     (module-file (expand-file-name native-async-rs--module-file-name target-dir)))
-                                                 (if (file-executable-p exec-file) ('t) ()))))
+This includes both the Emacs and rust side."
+       (let ((table (make-hash-table :test eql)) (exec(expand-file-name (native-async-rs--executable-file-name) (native-async-rs--rootdir))))
+         (record 'native-async-rs--notification-handler table (emacs-native-async-impl/setup
+                                                               (lambda (fd)
+                                                                 (make-process
+                                                                  :buffer 'nil
+                                                                  :command (exec (number-to-string fd))
+                                                                  :coding "binary"
+                                                                  :connection-type "pipe"
+                                                                  :filter (lambda (proc string) (let ((index 0))
+                                                                                                  (while ())))))))))
 
 (defun native-async-rs-init () "Initialize notification handler.")
 
 (defun native-async-rs-get () "Get default notification handler.")
-
-
-
 
 (provide 'native-async-rs)
 ;;; native-async-rs.el ends here
