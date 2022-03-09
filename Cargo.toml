@@ -2,6 +2,10 @@
 edition = "2021"
 name = "emacs-native-async"
 version = "0.1.0"
+license = "GPL-3.0-or-later"
+description = "module enabling to signal completion of parallel processes to Emacs"
+homepage = "https://github.com/RobinMarchart/emacs-native-async"
+repository = "https://github.com/RobinMarchart/emacs-native-async"
 [dependencies]
 libc = "0.2.119"
 anyhow = "1.0"
