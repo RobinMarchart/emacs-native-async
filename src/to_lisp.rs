@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex, RwLock};
+use std::{sync::{Arc, Mutex, RwLock}, mem::{take, replace}, ptr::null_mut};
 
 use emacs::{Env, IntoLisp, Transfer, Value};
 use libc::c_void;
@@ -20,11 +20,11 @@ pub enum ToLispConvert {
     Str(&'static str),
     String(String),
     Ptr(Option<unsafe extern "C" fn(arg1: *mut c_void)>, *mut c_void),
-    Lazy(Box<dyn FnOnce(&Env)->emacs::Result<Value>>),
+    Lazy(Option<Box<dyn FnOnce(&Env)->emacs::Result<Value>>>),
 }
 impl ToLispConvert {
-    pub fn to_value(self, env: &Env) -> emacs::Result<Value> {
-        match self {
+    pub fn to_value(mut self, env: &Env) -> emacs::Result<Value> {
+        match &mut self {
             ToLispConvert::Unit => ().into_lisp(env),
             ToLispConvert::I8(v) => v.into_lisp(env),
             ToLispConvert::I16(v) => v.into_lisp(env),
@@ -39,13 +39,18 @@ impl ToLispConvert {
             ToLispConvert::Bool(v) => v.into_lisp(env),
             ToLispConvert::F64(v) => v.into_lisp(env),
             ToLispConvert::Str(v) => v.into_lisp(env),
-            ToLispConvert::String(v) => v.into_lisp(env),
-            ToLispConvert::Ptr(fin, val) => unsafe { env.make_user_ptr(fin, val) },
-            ToLispConvert::Lazy(f) => f(env),
+            ToLispConvert::String(v) => take(v).into_lisp(env),
+            ToLispConvert::Ptr(fin, val) => unsafe { env.make_user_ptr(take(fin), replace(val,null_mut())) },
+            ToLispConvert::Lazy(f) => {
+                match take(f){
+                    Some(f)=>f(env),
+                    None=>Err(anyhow::anyhow!("empty value"))
+                }
+            }
         }
     }
-    pub fn lazy<F:FnOnce(&Env)->emacs::Result<Value>>(f:F)->ToLispConvert{
-        Self::Lazy(Box::new(f))
+    pub fn lazy<F:'static+FnOnce(&Env)->emacs::Result<Value>>(f:F)->ToLispConvert{
+        Self::Lazy(Some(Box::new(f)))
     }
 }
 
@@ -169,7 +174,7 @@ impl<'e> IntoLisp<'e> for ToLispConvert {
 impl Drop for ToLispConvert{
     fn drop(&mut self) {
         match self {
-            &mut Self::Ptr(Some(fin),val)=>fin(val),
+            &mut Self::Ptr(Some(fin),val)=>unsafe{fin(val)},
             _=>{}
         }
     }
