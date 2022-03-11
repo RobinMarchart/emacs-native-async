@@ -20,6 +20,7 @@ pub enum ToLispConvert {
     Str(&'static str),
     String(String),
     Ptr(Option<unsafe extern "C" fn(arg1: *mut c_void)>, *mut c_void),
+    Lazy(Box<dyn FnOnce(&Env)->emacs::Result<Value>>),
 }
 impl ToLispConvert {
     pub fn to_value(self, env: &Env) -> emacs::Result<Value> {
@@ -40,7 +41,11 @@ impl ToLispConvert {
             ToLispConvert::Str(v) => v.into_lisp(env),
             ToLispConvert::String(v) => v.into_lisp(env),
             ToLispConvert::Ptr(fin, val) => unsafe { env.make_user_ptr(fin, val) },
+            ToLispConvert::Lazy(f) => f(env),
         }
+    }
+    pub fn lazy<F:FnOnce(&Env)->emacs::Result<Value>>(f:F)->ToLispConvert{
+        Self::Lazy(Box::new(f))
     }
 }
 
@@ -154,8 +159,18 @@ impl<T: 'static> From<Arc<T>> for ToLispConvert {
         Box::new(v).into()
     }
 }
+
 impl<'e> IntoLisp<'e> for ToLispConvert {
     fn into_lisp(self, env: &'e Env) -> emacs::Result<Value<'e>> {
         self.to_value(env)
+    }
+}
+
+impl Drop for ToLispConvert{
+    fn drop(&mut self) {
+        match self {
+            &mut Self::Ptr(Some(fin),val)=>fin(val),
+            _=>{}
+        }
     }
 }

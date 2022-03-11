@@ -7,9 +7,9 @@ description = "module enabling to signal completion of parallel processes to Ema
 homepage = "https://github.com/RobinMarchart/emacs-native-async"
 repository = "https://github.com/RobinMarchart/emacs-native-async"
 [dependencies]
-libc = "0.2.119"
-anyhow = "1.0"
-emacs = "0.18"
-parking_lot="0.4.6"
+libc = "^0.2.119"
+anyhow = "^1.0"
+emacs = "^0.18"
+parking_lot="^0.4.6"
 [workspace]
 members=["native-setup","setup-bin"]
