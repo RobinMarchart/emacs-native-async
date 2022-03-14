@@ -11,4 +11,5 @@ emacs-native-async = {path = ".."}
 libc = "0.2.119"
 
 [lib]
+name = "native_async_rs_impl"
 crate-type = ["cdylib"]

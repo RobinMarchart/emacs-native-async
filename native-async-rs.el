@@ -27,13 +27,12 @@
 (unless module-file-suffix (error "Missing native module support"))
 (require 'promise)
 (require 'bindat)
+(require 'native-async-rs-impl)
 (if (= most-positive-fixnum 9223372036854775807) (error "only available on 64 bit Emacs"))
 
 (defvar native-async-rs--rootdir (file-name-directory (or load-file-name buffer-file-name)) "Local Directory of native-async-rs repo.")
 (defvar native-async-rs--executable-file-name "setup-bin" "Name of the helper executable.")
-(defvar native-async-rs--module-file-name "libnative_setup" "Name of the dynamic module file.")
 
-(load native-async-rs--module-file-name)
 
 (defun native-async-rs--wait-sync (promise) "Run PROMISE in other thread and suspend until completion."
        (let ((mutex (make-mutex)) (res (make-vector 2 'nil)))
@@ -57,25 +56,25 @@
 (defun native-async-rs--accept (events notifications index)
   (let ((event (gethash index events 'native-async-rs--default-event)))
     (condition-case err
-        (funcall (aref event 0) (emacs-native-async-impl/retrieve notifications index))
+        (funcall (aref event 0) (native-async-rs-impl-retrieve notifications index))
       (t (funcall (aref event 1) err)))))
 
 (defun native-async-rs-init () "Initialize the event handler.
 This includes both the Emacs and rust side."
        (let ((events (make-hash-table :test eql)) (exec(expand-file-name (native-async-rs--executable-file-name) (native-async-rs--rootdir))) (notifications 'nil))
-         (setq notifications (emacs-native-async-impl/setup (lambda (fd) (make-process) :buffer 'nil
-                                                              :command (exec (number-to-string fd))
-                                                              :coding "binary"
-                                                              :connection-type "pipe"
-                                                              :filter
-                                                              (lambda (_proc string)
-                                                                (let ((index 0))
-                                                                  (while (< (length string) index)
-                                                                    (make-thread
-                                                                     (lambda ()
-                                                                       (native-async-rs--accept events notifications
-                                                                                                (native-async-rs--parse-index string index))))
-                                                                    (setq index (+ index 8))))))))
+         (setq notifications (native-async-rs-impl-setup (lambda (fd) (make-process) :buffer 'nil
+                                                           :command (exec (number-to-string fd))
+                                                           :coding "binary"
+                                                           :connection-type "pipe"
+                                                           :filter
+                                                           (lambda (_proc string)
+                                                             (let ((index 0))
+                                                               (while (< (length string) index)
+                                                                 (make-thread
+                                                                  (lambda ()
+                                                                    (native-async-rs--accept events notifications
+                                                                                             (native-async-rs--parse-index string index))))
+                                                                 (setq index (+ index 8))))))))
          (record 'native-async-rs--notification-handler table notifications)))
 
 (defvar native-async-rs--default-handler 'nil "Default handler. Initialized to nil.")

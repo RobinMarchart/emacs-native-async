@@ -15,7 +15,7 @@ use std::{
 fn main() {
     emacs::plugin_is_GPL_compatible!();
 
-    #[emacs::module(name = "emacs-native-async-impl", separator = "/")]
+    #[emacs::module(name = "native-async-rs-impl", separator = "-")]
     fn init(env: &Env) -> emacs::Result<()> {
         #[defun]
         fn setup(env: &Env, setup_callback: Value) -> emacs::Result<Arc<NotificationHandler>> {

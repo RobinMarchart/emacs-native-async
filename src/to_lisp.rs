@@ -1,18 +1,20 @@
-use std::{sync::{Arc, Mutex, RwLock}, mem::{take, replace}, ptr::null_mut};
+use std::{
+    mem::{replace, take},
+    ptr::null_mut,
+    sync::{Arc, Mutex, RwLock},
+};
 
 use emacs::{Env, IntoLisp, Transfer, Value};
 use libc::c_void;
 
-pub enum ToLispConvert {
+pub struct ToLispConvert {
+    inner: ToLispConvertInner,
+}
+
+enum ToLispConvertInner {
     Unit,
-    I8(i8),
-    I16(i16),
-    I32(i32),
     I64(i64),
     ISize(isize),
-    U8(u8),
-    U16(u16),
-    U32(u32),
     U64(u64),
     USize(usize),
     Bool(bool),
@@ -20,113 +22,145 @@ pub enum ToLispConvert {
     Str(&'static str),
     String(String),
     Ptr(Option<unsafe extern "C" fn(arg1: *mut c_void)>, *mut c_void),
-    Lazy(Option<Box<dyn FnOnce(&Env)->emacs::Result<Value>>>),
+    Lazy(Option<Box<dyn Send + Sync + FnOnce(&Env) -> emacs::Result<Value> + Send + Sync>>),
 }
+
+unsafe impl Sync for ToLispConvertInner {}
+unsafe impl Send for ToLispConvertInner {}
+
 impl ToLispConvert {
     pub fn to_value(mut self, env: &Env) -> emacs::Result<Value> {
-        match &mut self {
-            ToLispConvert::Unit => ().into_lisp(env),
-            ToLispConvert::I8(v) => v.into_lisp(env),
-            ToLispConvert::I16(v) => v.into_lisp(env),
-            ToLispConvert::I32(v) => v.into_lisp(env),
-            ToLispConvert::I64(v) => v.into_lisp(env),
-            ToLispConvert::ISize(v) => v.into_lisp(env),
-            ToLispConvert::U8(v) => v.into_lisp(env),
-            ToLispConvert::U16(v) => v.into_lisp(env),
-            ToLispConvert::U32(v) => v.into_lisp(env),
-            ToLispConvert::U64(v) => v.into_lisp(env),
-            ToLispConvert::USize(v) => v.into_lisp(env),
-            ToLispConvert::Bool(v) => v.into_lisp(env),
-            ToLispConvert::F64(v) => v.into_lisp(env),
-            ToLispConvert::Str(v) => v.into_lisp(env),
-            ToLispConvert::String(v) => take(v).into_lisp(env),
-            ToLispConvert::Ptr(fin, val) => unsafe { env.make_user_ptr(take(fin), replace(val,null_mut())) },
-            ToLispConvert::Lazy(f) => {
-                match take(f){
-                    Some(f)=>f(env),
-                    None=>Err(anyhow::anyhow!("empty value"))
-                }
-            }
+        match &mut self.inner {
+            ToLispConvertInner::Unit => ().into_lisp(env),
+            ToLispConvertInner::I64(v) => v.into_lisp(env),
+            ToLispConvertInner::ISize(v) => v.into_lisp(env),
+            ToLispConvertInner::U64(v) => v.into_lisp(env),
+            ToLispConvertInner::USize(v) => v.into_lisp(env),
+            ToLispConvertInner::Bool(v) => v.into_lisp(env),
+            ToLispConvertInner::F64(v) => v.into_lisp(env),
+            ToLispConvertInner::Str(v) => v.into_lisp(env),
+            ToLispConvertInner::String(v) => take(v).into_lisp(env),
+            ToLispConvertInner::Ptr(fin, val) => unsafe {
+                env.make_user_ptr(take(fin), replace(val, null_mut()))
+            },
+            ToLispConvertInner::Lazy(f) => match take(f) {
+                Some(f) => f(env),
+                None => Err(anyhow::anyhow!("empty value")),
+            },
         }
     }
-    pub fn lazy<F:'static+FnOnce(&Env)->emacs::Result<Value>>(f:F)->ToLispConvert{
-        Self::Lazy(Some(Box::new(f)))
+    pub fn lazy<F: Send + Sync + 'static + FnOnce(&Env) -> emacs::Result<Value> + Send + Sync>(
+        f: F,
+    ) -> ToLispConvert {
+        Self {
+            inner: ToLispConvertInner::Lazy(Some(Box::new(f))),
+        }
     }
 }
 
 impl From<()> for ToLispConvert {
     fn from(_: ()) -> Self {
-        Self::Unit
+        Self {
+            inner: ToLispConvertInner::Unit,
+        }
     }
 }
 impl From<i8> for ToLispConvert {
     fn from(v: i8) -> Self {
-        Self::I8(v)
+        ToLispConvert {
+            inner: ToLispConvertInner::I64(v.into()),
+        }
     }
 }
 impl From<i16> for ToLispConvert {
     fn from(v: i16) -> Self {
-        Self::I16(v)
+        ToLispConvert {
+            inner: ToLispConvertInner::I64(v.into()),
+        }
     }
 }
 impl From<i32> for ToLispConvert {
     fn from(v: i32) -> Self {
-        Self::I32(v)
+        ToLispConvert {
+            inner: ToLispConvertInner::I64(v.into()),
+        }
     }
 }
 impl From<i64> for ToLispConvert {
     fn from(v: i64) -> Self {
-        Self::I64(v)
+        ToLispConvert {
+            inner: ToLispConvertInner::I64(v),
+        }
     }
 }
 impl From<isize> for ToLispConvert {
     fn from(v: isize) -> Self {
-        Self::ISize(v)
+        ToLispConvert {
+            inner: ToLispConvertInner::ISize(v),
+        }
     }
 }
 impl From<u8> for ToLispConvert {
     fn from(v: u8) -> Self {
-        Self::U8(v)
+        ToLispConvert {
+            inner: ToLispConvertInner::U64(v.into()),
+        }
     }
 }
 impl From<u16> for ToLispConvert {
     fn from(v: u16) -> Self {
-        Self::U16(v)
+        ToLispConvert {
+            inner: ToLispConvertInner::U64(v.into()),
+        }
     }
 }
 impl From<u32> for ToLispConvert {
     fn from(v: u32) -> Self {
-        Self::U32(v)
+        ToLispConvert {
+            inner: ToLispConvertInner::U64(v.into()),
+        }
     }
 }
 impl From<u64> for ToLispConvert {
     fn from(v: u64) -> Self {
-        Self::U64(v)
+        ToLispConvert {
+            inner: ToLispConvertInner::U64(v),
+        }
     }
 }
 impl From<usize> for ToLispConvert {
     fn from(v: usize) -> Self {
-        Self::USize(v)
+        ToLispConvert {
+            inner: ToLispConvertInner::USize(v),
+        }
     }
 }
 impl From<bool> for ToLispConvert {
     fn from(v: bool) -> Self {
-        Self::Bool(v)
+        ToLispConvert {
+            inner: ToLispConvertInner::Bool(v),
+        }
     }
 }
 impl From<f64> for ToLispConvert {
     fn from(v: f64) -> Self {
-        Self::F64(v)
+        ToLispConvert {
+            inner: ToLispConvertInner::F64(v),
+        }
     }
 }
 impl From<&'static str> for ToLispConvert {
     fn from(v: &'static str) -> Self {
-        Self::Str(v)
+        ToLispConvert {
+            inner: ToLispConvertInner::Str(v),
+        }
     }
 }
 impl From<String> for ToLispConvert {
     fn from(v: String) -> Self {
-        Self::String(v)
+        ToLispConvert {
+            inner: ToLispConvertInner::String(v),
+        }
     }
 }
 
@@ -140,26 +174,28 @@ unsafe extern "C" fn finalize<T: Transfer>(ptr: *mut c_void) {
     drop(Box::from_raw(ptr as *mut T));
 }
 
-impl<T: Transfer> From<Box<T>> for ToLispConvert {
+impl<T: Transfer + Send + Sync> From<Box<T>> for ToLispConvert {
     fn from(v: Box<T>) -> Self {
-        Self::Ptr(
-            Some(finalize::<T>),
-            std::boxed::Box::<T>::into_raw(v).cast(),
-        )
+        ToLispConvert {
+            inner: ToLispConvertInner::Ptr(
+                Some(finalize::<T>),
+                std::boxed::Box::<T>::into_raw(v).cast(),
+            ),
+        }
     }
 }
 
-impl<T: 'static> From<Mutex<T>> for ToLispConvert {
+impl<T: 'static+Send> From<Mutex<T>> for ToLispConvert {
     fn from(v: Mutex<T>) -> Self {
         Box::new(v).into()
     }
 }
-impl<T: 'static> From<RwLock<T>> for ToLispConvert {
+impl<T: 'static+Send+Sync> From<RwLock<T>> for ToLispConvert {
     fn from(v: RwLock<T>) -> Self {
         Box::new(v).into()
     }
 }
-impl<T: 'static> From<Arc<T>> for ToLispConvert {
+impl<T: 'static+Send+Sync> From<Arc<T>> for ToLispConvert {
     fn from(v: Arc<T>) -> Self {
         Box::new(v).into()
     }
@@ -171,11 +207,26 @@ impl<'e> IntoLisp<'e> for ToLispConvert {
     }
 }
 
-impl Drop for ToLispConvert{
+impl Drop for ToLispConvertInner {
     fn drop(&mut self) {
         match self {
-            &mut Self::Ptr(Some(fin),val)=>unsafe{fin(val)},
-            _=>{}
+            &mut Self::Ptr(Some(fin), val) => unsafe { fin(val) },
+            _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ToLispConvert;
+
+    #[allow(unused)]
+    struct IsSendSync<T: Send + Sync + 'static> {
+        t: T,
+    }
+
+    #[allow(unused)]
+    fn test_is_send_sync(_: IsSendSync<ToLispConvert>) -> () {
+        return ();
     }
 }
