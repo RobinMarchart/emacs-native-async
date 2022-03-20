@@ -1,7 +1,10 @@
 ;;;  native-async-rs.el --- enable native rust code to signal completion to emacs -*-lexical-binding: t; -*-
 ;;
+;; Package-Requires: ((promise "1.1") (emacs "27"))
+;;
+
 ;; Copyright (C) 2022 Robin Marchart
-;; 
+;;
 ;; This program is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
 ;; the Free Software Foundation, either version 3 of the License, or
@@ -15,7 +18,7 @@
 ;; You should have received a copy of the GNU General Public License
 ;; along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ;;
-;;Package-Requires: ((promise "1.1"))
+
 ;;; Commentary:
 ;;;
 ;;;
@@ -30,8 +33,34 @@
 (require 'native-async-rs-impl)
 (if (= most-positive-fixnum 9223372036854775807) (error "only available on 64 bit Emacs"))
 
-(defvar native-async-rs--rootdir (file-name-directory (or load-file-name buffer-file-name)) "Local Directory of native-async-rs repo.")
-(defvar native-async-rs--executable-file-name "setup-bin" "Name of the helper executable.")
+(defvar native-async-rs-build-silent nil "don't ask if library should be build if t")
+
+(defvar native-async-rs--rootdir (expand-file-name(file-name-directory (or load-file-name buffer-file-name)))"Local Directory of native-async-rs repo.")
+(defvar native-async-rs--executable-path (expand-file-name "target/release/setup-bin" native-async-rs--rootdir) "Path of the helper executable.")
+(defvar native-async-rs--module-path (expand-file-name (concat "target/release/libnative_setup" module-file-suffix) native-async-rs--rootdir) "Path of the native module")
+(defvar native-async-rs--compile-command '("cargo" "build" "--workspace" "--release") "command to compile native module")
+
+(defvar native-async-rs--ensure-native-promise nil "cached promise for ensure-native")
+
+(defun native-async-rs--ensure-native () "ensure, that all native components are compiled. returns a promise."
+       (unless native-async-rs--ensure-native-promise
+         (set native-async-rs--ensure-native-promise
+              (promise-new
+               (lambda (resolve reject)
+                 (if (and (require 'native-async-rs-impl native-async-rs--module-path t) (file-executable-p native-async-rs--executable-path))
+                     (funcall #'resolve ())
+                   (if (or native-async-rs-build-silent (y-or-n-p "native-async-rs needs to be build. do it now?"))
+                       (let ((buffer (get-buffer-create "native-asyc-rs-build"))))
+                     (with-current-buffer buffer (compilation-mode) (read-only-mode))
+                     (make-process :buffer buffer :command native-async-rs--compils-command :connection-type 'pipe :sentinel
+                                   (lambda (process event)
+                                     (pcase event
+                                       ("finished\n" (require 'native-async-rs-impl) (funcall resolve ()))
+                                       (rx (| (: "open" (* anychar)) "run\n"))
+                                       (_ (funcall reject event))))))
+                   (funcall reject "native-async-rs not build"))))))
+       native-async-rs--ensure-native-promise)
+
 
 
 (defun native-async-rs--wait-sync (promise) "Run PROMISE in other thread and suspend until completion."
@@ -51,8 +80,8 @@
 (defvar native-async-rs--default-event '[(lambda (_) ()) (lambda (_) ())] "default event register")
 
 (defun native-async-rs--parse-index (string index) "parse event index from string at position"
-       (let ((struct (bindat-unpack string index)))
-         (logior (bindat-get-field structure :low) (ash (bindat-get-field structure :high)))))
+       (let ((structure (bindat-unpack string index)))
+         (logior (bindat-get-field structure :low) (ash (bindat-get-field structure :high) 32))))
 (defun native-async-rs--accept (events notifications index)
   (let ((event (gethash index events 'native-async-rs--default-event)))
     (condition-case err
@@ -61,9 +90,9 @@
 
 (defun native-async-rs-init () "Initialize the event handler.
 This includes both the Emacs and rust side."
-       (let ((events (make-hash-table :test eql)) (exec(expand-file-name (native-async-rs--executable-file-name) (native-async-rs--rootdir))) (notifications 'nil))
+       (let ((events (make-hash-table)) (exec(expand-file-name native-async-rs--executable-file-name native-async-rs--rootdir)) (notifications 'nil))
          (setq notifications (native-async-rs-impl-setup (lambda (fd) (make-process) :buffer 'nil
-                                                           :command (exec (number-to-string fd))
+                                                           :command `(,exec ,(number-to-string fd))
                                                            :coding "binary"
                                                            :connection-type "pipe"
                                                            :filter
@@ -75,7 +104,7 @@ This includes both the Emacs and rust side."
                                                                     (native-async-rs--accept events notifications
                                                                                              (native-async-rs--parse-index string index))))
                                                                  (setq index (+ index 8))))))))
-         (record 'native-async-rs--notification-handler table notifications)))
+         (record 'native-async-rs--notification-handler events notifications)))
 
 (defvar native-async-rs--default-handler 'nil "Default handler. Initialized to nil.")
 
