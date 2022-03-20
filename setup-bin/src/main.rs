@@ -1,14 +1,14 @@
 use std::{
-    io::stdout,
+    io::{self, stdout},
     mem::{size_of, zeroed},
     os::unix::io::AsRawFd,
     ptr::{copy_nonoverlapping, null_mut},
 };
 
 use libc::{
-    c_int, c_uchar, getpid, iovec, msghdr, pid_t, sendmsg, sigaction, sigaddset, sigemptyset,
-    sigset_t, sigwait, CMSG_DATA, CMSG_FIRSTHDR, CMSG_LEN, CMSG_SPACE, SCM_RIGHTS, SIGUSR1,
-    SIG_IGN, SOL_SOCKET,
+    c_int, c_uchar, close, getpid, iovec, msghdr, pid_t, sendmsg, sigaction, sigaddset,
+    sigemptyset, sigset_t, sigwait, CMSG_DATA, CMSG_FIRSTHDR, CMSG_LEN, CMSG_SPACE, SCM_RIGHTS,
+    SIGUSR1, SIG_IGN, SOL_SOCKET,
 };
 
 fn main() -> anyhow::Result<()> {
@@ -52,7 +52,12 @@ fn main() -> anyhow::Result<()> {
         .parse()?;
     unsafe {
         sendmsg(fd, &msg, 0);
-        let mut s: i32 = 0;
+    }
+    if -1 == unsafe { close(fd) } {
+        return Err(io::Error::last_os_error().into());
+    }
+    let mut s: i32 = 0;
+    unsafe {
         sigwait(&action.sa_mask, &mut s);
     }
     Ok(())

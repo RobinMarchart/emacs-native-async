@@ -9,7 +9,9 @@ edition = "2021"
 emacs = "0.18"
 emacs-native-async = {path = ".."}
 libc = "0.2.119"
+anyhow = "1.0"
+abi_stable="^0.10.4"
+parking_lot="^0.4.6"
 
 [lib]
-name = "native_async_rs_impl"
 crate-type = ["cdylib"]

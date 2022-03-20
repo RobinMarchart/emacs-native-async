@@ -11,5 +11,6 @@ libc = "^0.2.119"
 anyhow = "^1.0"
 emacs = "^0.18"
 parking_lot="^0.4.6"
+abi_stable="^0.10.4"
 [workspace]
 members=["native-setup","setup-bin"]
