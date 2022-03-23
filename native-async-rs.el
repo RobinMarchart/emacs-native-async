@@ -26,49 +26,63 @@
 ;;;
 ;;;
 ;;; Code:
-;;;
-;;;
 
 
 (unless module-file-suffix (error "Missing native module support"))
 (require 'promise)
 (require 'bindat)
-(if (= most-positive-fixnum 9223372036854775807) (error "only available on 64 bit Emacs"))
+(if (= most-positive-fixnum 9223372036854775807) (error "Only available on 64 bit Emacs"))
 
-(defvar native-async-rs-build-silent nil "don't ask if library should be build if t")
+(defvar native-async-rs-build-silent nil "Don't ask if library should be build if t.")
 
 (defvar native-async-rs--rootdir (expand-file-name(file-name-directory (or load-file-name buffer-file-name)))"Local Directory of native-async-rs repo.")
 (defvar native-async-rs--executable-path (expand-file-name "target/release/setup-bin" native-async-rs--rootdir) "Path of the helper executable.")
-(defvar native-async-rs--module-path (expand-file-name (concat "target/release/libnative_setup" module-file-suffix) native-async-rs--rootdir) "Path of the native module")
-(defvar native-async-rs--compile-command '("cargo" "build" "--workspace" "--release") "command to compile native module")
+(defvar native-async-rs--module-path (expand-file-name (concat "target/release/libnative_setup" module-file-suffix) native-async-rs--rootdir) "Path of the native module.")
+(defvar native-async-rs--compile-command '("cargo" "build" "--workspace" "--release") "Command to compile native module.")
 
-(defvar native-async-rs--ensure-native-promise nil "cached promise for ensure-native")
+(defvar native-async-rs--ensure-native-promise nil "Cached promise for ensure-native.")
 
-(defun native-async-rs--ensure-native () "ensure, that all native components are compiled. returns a promise."
+(add-variable-watcher 'native-async-rs--rootdir
+                      (lambda (_symbol value op _where)
+                        (when (eq op 'set)
+                          (set 'native-async-rs--executable-path (expand-file-name "target/release/setup-bin" value))
+                          (set 'native-async-rs--module-path (expand-file-name (concat "target/release/libnative_setup" module-file-suffix) value)))))
+
+(defun native-async-rs--setup-function (resolve reject)
+  "Build the native module.
+Calls RESOLVE with nil on success, REJECT on failure"
+  (if (and (require 'native-async-rs-impl native-async-rs--module-path t) (file-executable-p native-async-rs--executable-path))
+      (funcall resolve ())
+    (if (or native-async-rs-build-silent (y-or-n-p "Native-async-rs needs to be build. do it now?"))
+        (let (
+              (buffer (get-buffer-create "native-async-rs-build"))
+              (default-directory (file-name-as-directory native-async-rs--rootdir))
+              (process-connection-type nil))
+          (with-current-buffer buffer
+            (compilation-mode)
+            (setq-local
+             default-directory (file-name-as-directory native-async-rs--rootdir)
+             process-connection-type nil)
+            (set-process-sentinel
+             (apply #'start-process "native-async-rs-build" buffer native-async-rs--compile-command)
+             (lambda (_process event)
+               (pcase event
+                 ("finished\n" (require 'native-async-rs-impl) (funcall resolve nil))
+                 ((rx (| (seq "open" (* anychar)) "run\n")))
+                 (_ (funcall reject event))))))
+          (unless native-async-rs-build-silent (pop-to-buffer buffer))
+          nil)
+      (funcall reject "native-async-rs not build"))))
+
+(defun native-async-rs--ensure-native () "Ensure, that all native components are compiled. Return promise."
        (unless native-async-rs--ensure-native-promise
          (setq native-async-rs--ensure-native-promise
-              (promise-new
-               (lambda (resolve reject)
-                 (if (and (require 'native-async-rs-impl native-async-rs--module-path t) (file-executable-p native-async-rs--executable-path))
-                     (funcall resolve ())
-                   (if (or native-async-rs-build-silent (y-or-n-p "native-async-rs needs to be build. do it now?"))
-                       (let ((buffer (get-buffer-create "native-asyc-rs-build")))
-                         (with-current-buffer buffer (compilation-mode) (read-only-mode))
-                         (unless native-async-rs-build-silent (pop-to-buffer buffer))
-                         (make-process
-                          :buffer buffer
-                          :command native-async-rs--compile-command
-                          :connection-type 'pipe
-                          :sentinel
-                          (lambda (_process event)
-                            (pcase event
-                              ("finished\n" (require 'native-async-rs-impl) (funcall resolve ()))
-                              (rx (| (seq "open" (* anychar)) "run\n"))
-                              (_ (funcall reject event))))))
-                     (funcall reject "native-async-rs not build")))))))
+               (promise-new #'native-async-rs--setup-function)))
+
        native-async-rs--ensure-native-promise)
 
 (defun native-async-rs--wait-sync (promise) "Run PROMISE in other thread and suspend until completion."
+       (unless (promise-class-p promise) (error "Invalid argument %s in native-async-rs--wait-sync" promise))
        (let* ((mutex (make-mutex)) (cond-var (make-condition-variable mutex)) (res nil))
          (promise-chain promise
            (then (lambda (value)
@@ -90,11 +104,11 @@
 
 (intern "native-async-rs--notification-store")
 
-(defvar native-async-rs--event-struct '((:low u32r) (:high u32r)) "struct used for reading events from pipe.")
+(defvar native-async-rs--event-struct '((:low u32r) (:high u32r)) "Struct used for reading events from pipe.")
 
-(defvar native-async-rs--default-event '[(lambda (_) ()) (lambda (_) ())] "default event register")
+(defvar native-async-rs--default-event '[(lambda (_) ()) (lambda (_) ())] "Default event noop.")
 
-(defun native-async-rs--parse-index (string index) "parse event index from string at position"
+(defun native-async-rs--parse-index (string index) "Parse event index from STRING at position INDEX."
        (let ((structure (bindat-unpack string index)))
          (logior (bindat-get-field structure :low) (ash (bindat-get-field structure :high) 32))))
 (defun native-async-rs--accept (events notifications index)
@@ -103,32 +117,33 @@
         (funcall (aref event 0) (native-async-rs-impl-retrieve notifications index))
       (t (funcall (aref event 1) err)))))
 
-(defun native-async-rs-init-async () "Initialize the event handler and this package asynchronously.
+(defun native-async-rs-init-async ()
+  "Initialize the event handler and this package asynchronously.
 This includes both the Emacs and rust side."
-       (promise-chain (native-async-rs--ensure-native)
-         (then
-          (lambda (_)
-            (let
-                ((events (make-hash-table))
-                 (exec(expand-file-name native-async-rs--executable-path native-async-rs--rootdir))
-                 (notifications nil))
-              (setq notifications
-                   (native-async-rs-impl-setup
-                    (lambda (fd)
-                      (make-process
-                       :buffer nil
-                       :command `(,exec ,(number-to-string fd))
-                       :coding "binary"
-                       :connection-type "pipe"
-                       :filter
-                       (lambda (_proc string)
-                         (let ((index 0))
-                           (while (< (length string) index)
-                             (make-thread
-                              (lambda ()
-                                (native-async-rs--accept events notifications (native-async-rs--parse-index string index))))
-                             (setq index (+ index 8)))))))))
-              (record 'native-async-rs--notification-store events notifications))))))
+  (promise-chain (native-async-rs--ensure-native)
+    (then
+     (lambda (_)
+       (let
+           ((events (make-hash-table))
+            (notifications nil))
+         (setq notifications
+               (native-async-rs-impl-setup
+                (lambda (fd)
+                  (make-process
+                   :name "native-async-worker"
+                   :buffer nil
+                   :command `(,native-async-rs--executable-path ,(number-to-string fd))
+                   :coding 'binary
+                   :connection-type 'pipe
+                   :filter
+                   (lambda (_proc string)
+                     (let ((index 0))
+                       (while (< (length string) index)
+                         (make-thread
+                          (lambda ()
+                            (native-async-rs--accept events notifications (native-async-rs--parse-index string index))))
+                         (set 'index (+ index 8)))))))))
+         (record 'native-async-rs--notification-store events notifications))))))
 
 (defun native-async-rs-init () "Initialize event handler and this package. Wait for completion synchronously."
        (native-async-rs--wait-sync (native-async-rs-init-async)))
@@ -138,16 +153,17 @@ This includes both the Emacs and rust side."
 
 (defun native-async-rs-get-async () "Get default notification store. Asynchronous version."
        (progn
-         (unless 'native-async-rs--default-notification-store (setq native-async-rs--default-notification-store (native-async-rs-init-async)))
+         (unless native-async-rs--default-notification-store (setq native-async-rs--default-notification-store (native-async-rs-init-async)))
          native-async-rs--default-notification-store))
 
 (defun native-async-rs-get () "Get default notification store. Synchronous version."
-       (native-async-rs--wait-sync (native-async-rs-get)))
+       (native-async-rs--wait-sync (native-async-rs-get-async)))
 
-(defun native-async-rs-wait-for-async (notifications index) "Return a promise for the result of the operation identified by index."
-       (promise-new (lambda (resolve reject) (puthash index [resolve reject] (aref notifications 1)))))
+(defun native-async-rs-wait-for-async (notifications index)
+  "Return a promise for the result from NOTIFICATIONS of the operation identified by INDEX."
+  (promise-new (lambda (resolve reject) (puthash index (vector resolve reject) (aref notifications 1)))))
 
-(defun native-async-rs-wait-for (notifications index) "Wait for the result of the operation identified by index."
+(defun native-async-rs-wait-for (notifications index) "Wait for the result from NOTIFICATIONS of the operation identified by INDEX."
        (native-async-rs--wait-sync (native-async-rs-wait-for-async notifications index)))
 
 (provide 'native-async-rs)
