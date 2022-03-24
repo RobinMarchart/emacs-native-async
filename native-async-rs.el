@@ -6,6 +6,8 @@
 ;; URL: https://github.com/RobinMarchart/emacs-native-async
 ;; Package-Requires: ((promise "1.1") (emacs "27"))
 ;; Version: 0.2
+;;
+;; This file is not part of GNU Emacs.
 
 ;;
 ;; This program is free software: you can redistribute it and/or modify
@@ -82,7 +84,7 @@ Calls RESOLVE with nil on success, REJECT on failure"
        native-async-rs--ensure-native-promise)
 
 (defun native-async-rs--wait-sync (promise) "Run PROMISE in other thread and suspend until completion."
-       (unless (promise-class-p promise) (error "Invalid argument %s in native-async-rs--wait-sync" promise))
+       (unless (promise-class-p promise) (error "Invalid argument %s in native-async-rs--wait-sync. Expected promise." promise))
        (let* ((mutex (make-mutex)) (cond-var (make-condition-variable mutex)) (res nil))
          (promise-chain promise
            (then (lambda (value)
@@ -106,9 +108,11 @@ Calls RESOLVE with nil on success, REJECT on failure"
 
 (defvar native-async-rs--event-struct '((:low u32r) (:high u32r)) "Struct used for reading events from pipe.")
 
-(defvar native-async-rs--default-event '[(lambda (_) ()) (lambda (_) ())] "Default event noop.")
+(defvar native-async-rs--default-event '[(lambda (_) ()) (lambda (_) ())] "Default event no op.")
 
 (defun native-async-rs--parse-index (string index) "Parse event index from STRING at position INDEX."
+       (unless (stringp string) (error "Invalid argument %s in native-async-rs--parse-index. Expected string." string))
+       (unless (integerp index) (error "Invalid argument %s in native-async-rs--parse-index. Expected integer." index))
        (let ((structure (bindat-unpack string index)))
          (logior (bindat-get-field structure :low) (ash (bindat-get-field structure :high) 32))))
 (defun native-async-rs--accept (events notifications index)
